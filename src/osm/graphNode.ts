@@ -1,4 +1,4 @@
-import type { OSMNode, OSMWay, OSMData } from "./OsmParser";
+import type { OSMData } from "./OsmParser";
 
 export interface GraphNode {
     id: string;
@@ -64,7 +64,7 @@ export function createGraphNode(data: OSMData): Map<string, GraphNode> {
 
         const isOneWay =
             ["yes", "1", "true"].includes(oneway) ||
-            way.tags.junction === "roundabout";
+            (oneway === undefined && way.tags.junction === "roundabout");
 
         for (let j = 0; j < way.nodes.length - 1; j++) {
 
@@ -83,7 +83,7 @@ export function createGraphNode(data: OSMData): Map<string, GraphNode> {
 
             const dist = Math.hypot(dx, dz);
 
-            if (dist === 0) continue;
+            if (!Number.isFinite(dist)) continue;
 
             // Create both graph nodes
             addNode(ndA.id, ndA.x, ndA.z);

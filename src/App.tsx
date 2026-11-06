@@ -1,21 +1,33 @@
-
 import './App.css'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Grid } from '@react-three/drei'
+import { OrbitControls } from '@react-three/drei'
 import Forklift from './components/Forklift'
-import {useEffect, useState} from 'react';
-import { parseOSM } from './osm/OsmParser';
+import {useEffect, useState, useRef, type RefObject} from 'react';
 import mapData from './osm/methode.json';
-import type { OSMData, OSMNode } from './osm/OsmParser';
 import { convertNodes } from './osm/CoordinateConverter';
 import Map3D from './components/Map3D';
 import { createGraphNode } from './osm/graphNode';
-import type { GraphNode } from './osm/graphNode';
 import MapClickHandler from './components/MapClickHandler';
 import NodeMarker from './components/NodeMarker';
 import { getPathToDest } from './components/routing';
+import RouteDisplay from './components/RouteDisplay';
 
-function Scene({data} : {data: OSMData | null}) {
+import type { OSMData } from './osm/OsmParser';
+import type { GraphNode } from './osm/graphNode';
+
+export type controlKeysType = {
+  forward: boolean,
+  backward: boolean,
+  right: boolean,
+  left: boolean
+}
+
+interface SceneProps {
+  data : OSMData | null;
+  controls: RefObject<controlKeysType>
+}
+
+function Scene({data, controls} : SceneProps) {
   return (
     <>
       {/* Lighting */}
@@ -34,6 +46,8 @@ function Scene({data} : {data: OSMData | null}) {
       <Forklift 
         position = {[-29.862212259107505, 0.02, 58.50418208124047]}
         rotation = {[0, Math.PI, 0]}
+        controllable
+        controls={controls}
       />
       <Forklift 
         position={[63.11884621914039, 0.02, -50]}
@@ -59,48 +73,10 @@ function Scene({data} : {data: OSMData | null}) {
   )
 }
 
-async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  try {
-    const xml = await file.text();
-    const osmData = parseOSM(xml);
-
-    const jsonData = {
-      nodes : Object.fromEntries(osmData.nodes),
-      ways: osmData.ways
-    }
-
-    const json = JSON.stringify(jsonData, null, 2)
-
-    const blob = new Blob([json], {
-        type: 'application/json'
-    });
-
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'map.json';
-    a.click();
-
-    URL.revokeObjectURL(url);
-
-  }  catch (error) {
-    console.error('OSM loading failed:', error);
-  }
-}
-
 function App() {
-  const [jsonData, setJsonData] = useState<OSMData | null>(null);
-  const [graphNode, setGraphNode] = useState<Map<string, GraphNode> | null>(null);
-  const [navigationMode, setNavigationMode] = useState(false);
-  const [startNode, setStartNode] = useState<OSMNode | null>(null);
-  const [endNode, setEndNode] = useState<OSMNode | null>(null);
-
-  useEffect(() => {
+  const [{ jsonData, graphNode }] = useState(() => {
     const data : OSMData = {
-      nodes: new Map(Object.entries(mapData.nodes)),
+      nodes: new Map(Object.entries(mapData.nodes).map(([id, node]) => [id, { ...node }])),
       ways: mapData.ways.map(way => ({
         ...way,
         tags: Object.fromEntries(
@@ -108,75 +84,91 @@ function App() {
         )
       }))
     }
-
     convertNodes(data.nodes);
+    return { jsonData: data, graphNode: createGraphNode(data) };
+  });
+  const [navigationMode, setNavigationMode] = useState(false);
+  const [startNode, setStartNode] = useState<GraphNode | null>(null);
+  const [endNode, setEndNode] = useState<GraphNode | null>(null);
+  const [route, setRoute] = useState<string[] | null>(null);
+  const keys = useRef<controlKeysType>({forward: false,backward: false, left: false, right: false});
 
-    const graph : Map<string, GraphNode>  = createGraphNode(data);
-    console.log("graph", graph)
-    if (graph) {
-      setGraphNode(graph);
-    }
-    
-    console.log("246518886",data.nodes.get('246518886'));
-    console.log("4537443253",data.nodes.get('4537443253'));
-
-    setJsonData(data);
-    
-  },[]);
-  
   useEffect(() => {
-    const handleKeyPressed = (e: { key: string; }) => {
-      if (e.key === 'n' ) {
-        setNavigationMode(v => !v);
+    
+    const setKey = (e: KeyboardEvent, pressed: boolean) => {
+      switch(e.code) {
+        case 'KeyW':
+        case 'ArrowUp':
+          keys.current.forward = pressed;
+          break;
+        
+        case 'KeyS':
+        case 'ArrowDown':
+          keys.current.backward = pressed;
+          break;
+        
+        case 'KeyA':
+        case 'ArrowLeft':
+          keys.current.left = pressed;
+          break;
+
+        case 'KeyD':
+        case 'ArrowRight':
+          keys.current.right = pressed;
+          break;
       }
     }
-
-    window.addEventListener('keydown', handleKeyPressed);
     
-    return () => {
-      window.removeEventListener('keydown', handleKeyPressed);
-    }
+    const handleKeyDown = (e:KeyboardEvent) => {
+      setKey(e, true);
 
+      if (e.code === 'KeyN' && !e.repeat) {
+        setNavigationMode((v) => !v);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent)=> setKey(e,false);
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, []);
 
   const setNavNode = (nodeID : string) => {
-    if (nodeID) {
-      
-      const dataHasNode = (id : string) => jsonData?.nodes.has(id);
-      const dataGetNode = (id : string) => jsonData?.nodes.get(id);
-      
-      if (startNode && endNode) {
-        const node = dataGetNode(nodeID);
-        setStartNode(node ?? null);
-        setEndNode(null);
-      }
+    const node = graphNode?.get(nodeID);
+    if (!node) return;
 
-      if (!startNode && dataHasNode(nodeID)) {
-          const node = dataGetNode(nodeID);
-          setStartNode(node ?? null);
-      } else if (startNode && !endNode && dataHasNode(nodeID)) {
-        setEndNode(dataGetNode(nodeID) ?? null);
-        getPathToDest(startNode, dataGetNode(nodeID) ?? null, graphNode)
-      }
+    if (!startNode || endNode) {
+      setStartNode(node);
+      setEndNode(null);
+      setRoute(null);
+      return;
     }
+
+    setEndNode(node);
+    setRoute(getPathToDest(startNode, node, graphNode));
   }
 
   return (
     <div id="main-app">
-      {/* <input type="file" accept='.osm,.xml' onChange={handleFileChange}/> */}
       
       {/* Navigation information */}
       <div className="navigation-info">
-          <p>Start: {JSON.stringify(startNode) ?? 'Not selected'}</p>
-          <p>Destination: {JSON.stringify(endNode) ?? 'Not selected'}</p>
+          <p>Start: {startNode?.id ?? 'Not selected'}</p>
+          <p>Destination: {endNode?.id ?? 'Not selected'}</p>
+          {endNode && <p>{route ? `Route: ${route.join(' → ')}` : 'No route found'}</p>}
+          <p>Press 'n' to enable navigation mode {navigationMode ? 'Nav mode: Enabled' : 'Nav mode disabled'}</p>
       </div>
       
       <Canvas camera={{ position: [30, 30, 30], fov: 50 }}>
-        <Scene data={jsonData} />
+        <Scene data={jsonData} controls={keys}/>
 
         {navigationMode && 
         <MapClickHandler 
-          nodes={jsonData?.nodes ?? null} 
+          nodes={graphNode}
           onSelectNode={setNavNode}
         />}
 
@@ -186,6 +178,13 @@ function App() {
 
         {endNode && (
           <NodeMarker node = {endNode} color='red'/>
+        )}
+
+        {startNode && endNode && route && (
+          <RouteDisplay 
+            nodes={jsonData.nodes} 
+            routeNodes={route}
+          />
         )}
 
       </Canvas>

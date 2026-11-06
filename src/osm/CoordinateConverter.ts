@@ -40,7 +40,7 @@ export function convertNodes (
     const originLon = 
         values.reduce((sum, n) => sum + n.lon, 0) / values.length;
 
-    for (const [id, node] of nodes) {
+    for (const node of nodes.values()) {
         [node.x, node.z] = latLonToWorld(node.lat, node.lon, originLat, originLon);
     }
 

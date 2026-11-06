@@ -1,12 +1,24 @@
+import { useRef, type RefObject } from "react"
+import * as THREE from 'three'
+import { useFrame } from "@react-three/fiber"
+import type { controlKeysType } from "../App"
+
 interface BoxProps {
   position: [number, number, number]
-  args: [number, number, number]
-  color: string
+  args?: [number, number, number]
+  color?: string
   rotation?: [number, number, number]
 }
 
 interface WheelProps {
   position: [number, number, number]
+}
+
+interface ForkLiftProps {
+    position: [number, number, number],
+    rotation: [number, number, number],
+    controllable?: boolean,
+    controls? : RefObject<controlKeysType>
 }
 
 function Box({ position , args, color, rotation = [0, 0, 0] } : BoxProps) {
@@ -27,9 +39,50 @@ function Wheel({ position } : WheelProps) {
   )
 }
 
-export default function Forklift({ position, rotation }: { position: [number, number, number] ; rotation: [number, number, number]}) {
+export default function Forklift({ position, rotation, controllable = false, controls }: ForkLiftProps) {
+  
+  const group = useRef<THREE.Group>(null);
+
+  const motion = useRef({
+    x: position[0],
+    z: position[2],
+    yaw : rotation[1],
+    speed: 2,
+    steering: 0.15, // radians: fixed for the test
+    wheelbase: 1.5 // aproximate distance between wheel axles
+  });
+  
+  useFrame((_, delta) => {
+    if (!controllable) return;
+    
+    const groupObject = group.current;
+    if (!groupObject) return;
+    const dt = Math.min(delta, 0.05);
+
+    const input  = controls?.current;
+    if (!input) return;
+
+    const {forward, backward, left, right} = controls.current;
+
+    const speedSet = 2 * ((forward ? 1 : 0) - (backward ? 1 : 0));
+    const steeringAngle = 0.15 * ((right ? 1 : 0) - (left ? 1 : 0));
+
+    const {x , z , yaw, wheelbase} = motion.current;
+
+    const nextYaw = yaw - (speedSet / wheelbase) * Math.tan(steeringAngle) * dt;
+    const nextX = x + speedSet * Math.sin(yaw) * dt;
+    const nextZ = z + speedSet * Math.cos(yaw) * dt;
+
+    motion.current.x = nextX;
+    motion.current.z = nextZ;
+    motion.current.yaw = nextYaw;
+
+    groupObject.position.set(nextX, position[1], nextZ);
+    groupObject.rotation.y = nextYaw;
+  });
+  
   return (
-    <group position={position} rotation={rotation}>
+    <group ref={group} position={position} rotation={rotation}>
 
       {/* Main chassis */}
       <Box
